@@ -17,7 +17,7 @@ Single-binary Rust CLI (`src/main.rs`) — the entire codebase lives in one file
 
 ### Key Components
 
-- **Config** — Deserialized from `feature-guard.toml` (or `check-features.toml`). Defines `[[entry-points]]` and `[[never-enables]]` rules.
+- **Config** — Deserialized from `feature-guard.toml`. Defines `[[entry-points]]` and `[[never-enables]]` rules.
 - **Workspace parser** — Reads workspace `Cargo.toml`, resolves glob members, collects each crate's feature definitions.
 - **Cargo tree parser** — Runs `cargo tree -e features` and parses the output with regex to extract resolved features per crate.
 - **Three checks** run in sequence:

@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-// ── Configuration (loaded from feature-guard.toml / check-features.toml) ─────
+// ── Configuration (loaded from feature-guard.toml) ───────────────────────────
 
 #[derive(Deserialize)]
 struct Config {
@@ -115,9 +115,7 @@ fn parse_args() -> CliArgs {
                 println!();
                 println!("Options:");
                 println!("  --init           Generate a starter feature-guard.toml");
-                println!(
-                    "  --config <path>  Path to config file (default: feature-guard.toml or check-features.toml)"
-                );
+                println!("  --config <path>  Path to config file (default: feature-guard.toml)");
                 println!("  -h, --help       Print this help message");
                 println!("  -V, --version    Print version");
                 std::process::exit(0);
@@ -150,14 +148,7 @@ fn resolve_config_path(root: &Path, explicit: Option<PathBuf>) -> PathBuf {
         return primary;
     }
 
-    let fallback = root.join("check-features.toml");
-    if fallback.exists() {
-        return fallback;
-    }
-
-    eprintln!(
-        "error: no config file found (looked for feature-guard.toml and check-features.toml)"
-    );
+    eprintln!("error: no config file found (looked for feature-guard.toml)");
     std::process::exit(2);
 }
 
@@ -753,24 +744,6 @@ never-enables = []
 
         let result = resolve_config_path(&tmp, None);
         assert_eq!(result, primary);
-
-        std::fs::remove_dir_all(&tmp).ok();
-    }
-
-    #[test]
-    fn test_resolve_config_legacy_fallback() {
-        let tmp = std::env::temp_dir().join("cfg-test-legacy");
-        std::fs::create_dir_all(&tmp).unwrap();
-
-        // Only check-features.toml exists → should fall back to it
-        let legacy = tmp.join("check-features.toml");
-        std::fs::File::create(&legacy)
-            .unwrap()
-            .write_all(b"")
-            .unwrap();
-
-        let result = resolve_config_path(&tmp, None);
-        assert_eq!(result, legacy);
 
         std::fs::remove_dir_all(&tmp).ok();
     }

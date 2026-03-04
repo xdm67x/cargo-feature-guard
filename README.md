@@ -23,7 +23,7 @@ cargo binstall cargo-feature-guard
 ## Usage
 
 ```bash
-# Run in your workspace root (looks for feature-guard.toml or check-features.toml)
+# Run in your workspace root (looks for feature-guard.toml)
 cargo feature-guard
 
 # Specify a custom config file
