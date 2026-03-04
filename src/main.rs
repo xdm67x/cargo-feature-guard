@@ -77,6 +77,7 @@ impl CheckResult {
 
 struct CliArgs {
     config_path: Option<PathBuf>,
+    init: bool,
 }
 
 fn parse_args() -> CliArgs {
@@ -89,9 +90,13 @@ fn parse_args() -> CliArgs {
     }
 
     let mut config_path = None;
+    let mut init = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--init" => {
+                init = true;
+            }
             "--config" => {
                 i += 1;
                 if i < args.len() {
@@ -109,6 +114,7 @@ fn parse_args() -> CliArgs {
                 );
                 println!();
                 println!("Options:");
+                println!("  --init           Generate a starter feature-guard.toml");
                 println!(
                     "  --config <path>  Path to config file (default: feature-guard.toml or check-features.toml)"
                 );
@@ -122,14 +128,14 @@ fn parse_args() -> CliArgs {
             }
             other => {
                 eprintln!("error: unexpected argument '{other}'");
-                eprintln!("Usage: cargo feature-guard [--config <path>]");
+                eprintln!("Usage: cargo feature-guard [--init] [--config <path>]");
                 std::process::exit(2);
             }
         }
         i += 1;
     }
 
-    CliArgs { config_path }
+    CliArgs { config_path, init }
 }
 
 // ── Config file resolution ──────────────────────────────────────────────────
@@ -153,6 +159,50 @@ fn resolve_config_path(root: &Path, explicit: Option<PathBuf>) -> PathBuf {
         "error: no config file found (looked for feature-guard.toml and check-features.toml)"
     );
     std::process::exit(2);
+}
+
+// ── Init command ─────────────────────────────────────────────────────────────
+
+const INIT_TEMPLATE: &str = r#"# Feature Guard Configuration
+# See: https://github.com/xdm67x/cargo-feature-guard
+#
+# [[entry-points]]    — packages + features to validate propagation for
+# [[never-enables]]   — features that must never be activated
+
+[[entry-points]]
+package = "my-app"
+features = ["default"]
+
+# [[entry-points]]
+# package = "my-lib"
+# features = ["std", "serde"]
+
+[[never-enables]]
+package = "my-app"
+manifest-path = "my-app/Cargo.toml"
+forbidden = "mock"
+
+# [[never-enables]]
+# package = "my-lib"
+# manifest-path = "my-lib/Cargo.toml"
+# forbidden = "test-only"
+"#;
+
+fn handle_init(root: &Path) -> Result<(), String> {
+    if !root.join("Cargo.toml").exists() {
+        return Err("not a Cargo project (no Cargo.toml found)".to_string());
+    }
+
+    let config_path = root.join("feature-guard.toml");
+    if config_path.exists() {
+        return Err("feature-guard.toml already exists".to_string());
+    }
+
+    std::fs::write(&config_path, INIT_TEMPLATE)
+        .map_err(|e| format!("failed to write feature-guard.toml: {e}"))?;
+
+    println!("Created feature-guard.toml — edit it to match your workspace.");
+    Ok(())
 }
 
 // ── Workspace parsing ────────────────────────────────────────────────────────
@@ -476,6 +526,15 @@ fn check_duplicate_deps() -> Vec<DuplicateDep> {
 fn main() -> ExitCode {
     let cli = parse_args();
     let root = std::env::current_dir().expect("Cannot get current directory");
+
+    if cli.init {
+        if let Err(msg) = handle_init(&root) {
+            eprintln!("error: {msg}");
+            return ExitCode::from(2);
+        }
+        return ExitCode::SUCCESS;
+    }
+
     let config_path = resolve_config_path(&root, cli.config_path);
 
     let config_content = std::fs::read_to_string(&config_path)
@@ -748,5 +807,58 @@ never-enables = []
             }],
         };
         assert!(!with_dups.has_errors());
+    }
+
+    #[test]
+    fn init_creates_config_file() {
+        let tmp = std::env::temp_dir().join("init-test-creates");
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::File::create(tmp.join("Cargo.toml")).unwrap();
+
+        // Remove any leftover config from a previous run
+        let _ = std::fs::remove_file(tmp.join("feature-guard.toml"));
+
+        handle_init(&tmp).unwrap();
+
+        let content = std::fs::read_to_string(tmp.join("feature-guard.toml")).unwrap();
+        assert!(content.contains("[[entry-points]]"));
+        assert!(content.contains("[[never-enables]]"));
+
+        // Verify the generated file is valid TOML that deserializes into Config
+        let config: Config = toml::from_str(&content).unwrap();
+        assert_eq!(config.entry_points.len(), 1);
+        assert_eq!(config.never_enables.len(), 1);
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn init_fails_without_cargo_toml() {
+        let tmp = std::env::temp_dir().join("init-test-no-cargo");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let _ = std::fs::remove_file(tmp.join("Cargo.toml"));
+
+        let result = handle_init(&tmp);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no Cargo.toml"));
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn init_fails_if_config_exists() {
+        let tmp = std::env::temp_dir().join("init-test-exists");
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::File::create(tmp.join("Cargo.toml")).unwrap();
+        std::fs::File::create(tmp.join("feature-guard.toml"))
+            .unwrap()
+            .write_all(b"existing")
+            .unwrap();
+
+        let result = handle_init(&tmp);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already exists"));
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
