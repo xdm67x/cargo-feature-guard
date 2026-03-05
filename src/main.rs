@@ -746,10 +746,7 @@ forbidden = ["mock", "test-only"]
 
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.never_enables.len(), 1);
-        assert_eq!(
-            config.never_enables[0].forbidden,
-            vec!["mock", "test-only"]
-        );
+        assert_eq!(config.never_enables[0].forbidden, vec!["mock", "test-only"]);
     }
 
     #[test]
