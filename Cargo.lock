@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-feature-guard"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "regex",
  "serde",
