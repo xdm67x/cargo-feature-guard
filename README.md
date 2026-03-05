@@ -1,5 +1,7 @@
 # cargo-feature-guard
 
+[![Crates.io](https://img.shields.io/crates/v/cargo-feature-guard)](https://crates.io/crates/cargo-feature-guard) [![CI](https://github.com/xdm67x/cargo-feature-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/xdm67x/cargo-feature-guard/actions/workflows/ci.yml)
+
 Validate Cargo feature propagation across a workspace. Catches common mistakes like forgetting to forward a feature flag through intermediate crates.
 
 ## What it checks
