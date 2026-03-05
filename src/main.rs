@@ -668,6 +668,27 @@ fn main() -> ExitCode {
     let duplicate_deps = check_duplicate_deps_from_toml(&crates, &workspace_deps);
     if !duplicate_deps.is_empty() {
         println!("  ⚠️ {} finding(s)", duplicate_deps.len());
+        for finding in &duplicate_deps {
+            match finding {
+                DuplicateFinding::VersionConflict {
+                    dep_name,
+                    occurrences,
+                } => {
+                    let versions: Vec<_> = occurrences
+                        .iter()
+                        .map(|(c, v)| format!("{c}=\"{v}\""))
+                        .collect();
+                    println!("    🔀 {dep_name}: {}", versions.join(", "));
+                }
+                DuplicateFinding::NotUsingWorkspaceDep {
+                    dep_name,
+                    crate_name,
+                    ..
+                } => {
+                    println!("    📌 {crate_name} → {dep_name}: not using workspace dep");
+                }
+            }
+        }
     } else {
         println!("  ✅ No duplicate dependency issues");
     }
