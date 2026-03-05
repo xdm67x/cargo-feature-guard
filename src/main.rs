@@ -132,7 +132,7 @@ fn parse_args() -> CliArgs {
                 if i < args.len() {
                     config_path = Some(PathBuf::from(&args[i]));
                 } else {
-                    eprintln!("error: --config requires a path argument");
+                    eprintln!("❌ --config requires a path argument");
                     std::process::exit(2);
                 }
             }
@@ -155,7 +155,7 @@ fn parse_args() -> CliArgs {
                 std::process::exit(0);
             }
             other => {
-                eprintln!("error: unexpected argument '{other}'");
+                eprintln!("❌ unexpected argument '{other}'");
                 eprintln!("Usage: cargo feature-guard [--init] [--config <path>]");
                 std::process::exit(2);
             }
@@ -178,7 +178,7 @@ fn resolve_config_path(root: &Path, explicit: Option<PathBuf>) -> PathBuf {
         return primary;
     }
 
-    eprintln!("error: no config file found (looked for feature-guard.toml)");
+    eprintln!("❌ no config file found (looked for feature-guard.toml)");
     std::process::exit(2);
 }
 
@@ -220,7 +220,7 @@ fn handle_init(root: &Path) -> Result<(), String> {
     std::fs::write(&config_path, INIT_TEMPLATE)
         .map_err(|e| format!("failed to write feature-guard.toml: {e}"))?;
 
-    println!("Created feature-guard.toml — edit it to match your workspace.");
+    println!("✅ Created feature-guard.toml — edit it to match your workspace.");
     Ok(())
 }
 
@@ -360,7 +360,7 @@ fn cargo_tree_resolved_features(
         .expect("Failed to run cargo tree");
 
     if !output.status.success() {
-        eprintln!("  warning: cargo tree failed for {pkg} --features {features_str}:");
+        eprintln!("  ⚠️ cargo tree failed for {pkg} --features {features_str}:");
         eprintln!("    {}", String::from_utf8_lossy(&output.stderr).trim());
         return HashMap::new();
     }
@@ -410,9 +410,9 @@ fn check_feature_propagation(
         }
 
         let status = if gaps.is_empty() {
-            "ok".to_string()
+            "✅ ok".to_string()
         } else {
-            format!("warning: {} gap(s)", gaps.len())
+            format!("⚠️ {} gap(s)", gaps.len())
         };
         println!("    {status}");
 
@@ -458,7 +458,7 @@ fn check_never_enables(
 
         if !output.status.success() {
             eprintln!(
-                "    warning: cargo tree failed: {}",
+                "    ⚠️ cargo tree failed: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             );
             continue;
@@ -476,7 +476,7 @@ fn check_never_enables(
 
             if !enabled_in.is_empty() {
                 println!(
-                    "    warning: '{}' enabled in: {}",
+                    "    ⚠️ '{}' enabled in: {}",
                     forbidden,
                     enabled_in.join(", ")
                 );
@@ -486,7 +486,7 @@ fn check_never_enables(
                     enabled_in,
                 });
             } else {
-                println!("    '{}': ok", forbidden);
+                println!("    ✅ '{}': ok", forbidden);
             }
         }
     }
@@ -504,7 +504,7 @@ fn check_duplicate_deps() -> Vec<DuplicateDep> {
 
     if !output.status.success() && output.stdout.is_empty() {
         eprintln!(
-            "  warning: cargo tree -d failed: {}",
+            "  ⚠️ cargo tree -d failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
         return Vec::new();
@@ -531,12 +531,12 @@ fn check_duplicate_deps() -> Vec<DuplicateDep> {
         .collect();
 
     if !duplicates.is_empty() {
-        println!("  warning: {} duplicate dep(s)", duplicates.len());
+        println!("  ⚠️ {} duplicate dep(s)", duplicates.len());
         for dup in &duplicates {
             println!("    {}: {}", dup.name, dup.versions.join(", "));
         }
     } else {
-        println!("  ok — no duplicate dependencies");
+        println!("  ✅ No duplicate dependencies");
     }
 
     duplicates
@@ -550,7 +550,7 @@ fn main() -> ExitCode {
 
     if cli.init {
         if let Err(msg) = handle_init(&root) {
-            eprintln!("error: {msg}");
+            eprintln!("❌ {msg}");
             return ExitCode::from(2);
         }
         return ExitCode::SUCCESS;
@@ -568,17 +568,17 @@ fn main() -> ExitCode {
     let re = Regex::new(r"(\S+) v[\d.]+ \([^)]+\) \[([^\]]*)\]").unwrap();
     let prefix_re = Regex::new(r"^[│├└─\s]+").unwrap();
 
-    println!("Workspace: {} crates\n", crates.len());
+    println!("📦 Workspace: {} crates\n", crates.len());
 
-    println!("[1/3] Feature propagation");
+    println!("🔗 [1/3] Feature propagation");
     let feature_gaps = check_feature_propagation(&config, &crates, &re, &prefix_re);
     println!();
 
-    println!("[2/3] Never-enables");
+    println!("🚫 [2/3] Never-enables");
     let never_enables_violations = check_never_enables(&config, &re, &prefix_re);
     println!();
 
-    println!("[3/3] Duplicate dependencies");
+    println!("📋 [3/3] Duplicate dependencies");
     let duplicate_deps = check_duplicate_deps();
     println!();
 
@@ -590,15 +590,15 @@ fn main() -> ExitCode {
 
     // ── Summary ──────────────────────────────────────────────────────────────
 
-    println!("{}", "=".repeat(60));
+    println!("{}", "━".repeat(60));
 
     if !result.has_errors() {
-        println!("All checks passed!");
+        println!("✅ All checks passed!");
         return ExitCode::SUCCESS;
     }
 
     if !result.feature_gaps.is_empty() {
-        println!("\n{} feature gap(s):\n", result.feature_gaps.len());
+        println!("\n❌ {} feature gap(s):\n", result.feature_gaps.len());
         for gap in &result.feature_gaps {
             let features_str = gap.entry_features.join(",");
             println!(
@@ -606,14 +606,14 @@ fn main() -> ExitCode {
                 gap.crate_name, gap.feature
             );
             println!(
-                "    Entry point: {} --features {features_str}",
+                "    📍 Entry point: {} --features {features_str}",
                 gap.entry_point
             );
             if !gap.feature_content.is_empty() {
-                println!("    Defined content: {:?}", gap.feature_content);
+                println!("    📄 Defined content: {:?}", gap.feature_content);
             }
             println!(
-                "    Fix: forward '{}' from a parent crate in the dependency graph",
+                "    💡 Fix: forward '{}' from a parent crate in the dependency graph",
                 gap.feature
             );
             println!();
@@ -622,7 +622,7 @@ fn main() -> ExitCode {
 
     if !result.never_enables_violations.is_empty() {
         println!(
-            "\n{} never-enables violation(s):\n",
+            "\n❌ {} never-enables violation(s):\n",
             result.never_enables_violations.len()
         );
         for v in &result.never_enables_violations {
@@ -636,7 +636,7 @@ fn main() -> ExitCode {
 
     if !result.duplicate_deps.is_empty() {
         println!(
-            "\n{} duplicate dep(s) (informational):\n",
+            "\n⚠️ {} duplicate dep(s) (informational):\n",
             result.duplicate_deps.len()
         );
         for dup in &result.duplicate_deps {
