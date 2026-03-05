@@ -35,8 +35,6 @@ struct EntryPointConfig {
 #[derive(Deserialize)]
 struct NeverEnablesConfig {
     package: String,
-    #[serde(rename = "manifest-path")]
-    manifest_path: String,
     forbidden: String,
 }
 
@@ -170,12 +168,10 @@ features = ["default"]
 
 [[never-enables]]
 package = "my-app"
-manifest-path = "my-app/Cargo.toml"
 forbidden = "mock"
 
 # [[never-enables]]
 # package = "my-lib"
-# manifest-path = "my-lib/Cargo.toml"
 # forbidden = "test-only"
 "#;
 
@@ -421,8 +417,6 @@ fn check_never_enables(
                 "features",
                 "-p",
                 &rule.package,
-                "--manifest-path",
-                &rule.manifest_path,
                 "-f",
                 "{p} [{f}]",
             ])
@@ -691,7 +685,6 @@ features = ["nfc"]
 
 [[never-enables]]
 package = "c_api"
-manifest-path = "c_api/Cargo.toml"
 forbidden = "mock"
 "#;
 
