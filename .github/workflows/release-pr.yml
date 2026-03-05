@@ -1,0 +1,149 @@
+name: Release PR
+
+# Manually triggered to open a release PR that bumps the version in Cargo.toml
+# and includes a changelog generated from git log since the last tag.
+# After this PR is merged, the auto-tag workflow creates the vX.Y.Z tag which
+# triggers the release workflow (build, GitHub release, crates.io publish).
+on:
+  workflow_dispatch:
+    inputs:
+      bump-type:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-release-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Fetch all history and tags so we can generate the changelog
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        run: |
+          # Read the current version from Cargo.toml (line 3: version = "X.Y.Z")
+          CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Current version: $CURRENT"
+
+          # Split into parts
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+
+          # Bump the appropriate component, reset trailing ones to 0
+          case "${{ inputs.bump-type }}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEXT="${MAJOR}.${MINOR}.${PATCH}"
+          echo "Next version: $NEXT"
+
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "next=$NEXT"       >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -n "$LAST_TAG" ]; then
+            echo "Generating changelog since tag: $LAST_TAG"
+            LOG=$(git log "${LAST_TAG}..HEAD" --oneline --no-merges)
+          else
+            echo "No previous tag found — including full history"
+            LOG=$(git log --oneline --no-merges)
+          fi
+
+          if [ -z "$LOG" ]; then
+            LOG="No changes since last release."
+          fi
+
+          # Write to a temp file to safely handle multi-line output
+          echo "$LOG" > /tmp/changelog.txt
+          echo "Changelog:"
+          cat /tmp/changelog.txt
+
+      - name: Bump version in Cargo.toml
+        run: |
+          CURRENT="${{ steps.version.outputs.current }}"
+          NEXT="${{ steps.version.outputs.next }}"
+
+          # Replace exactly the version line (anchored to avoid matching dependency versions)
+          sed -i "s/^version = \"${CURRENT}\"/version = \"${NEXT}\"/" Cargo.toml
+
+          # Verify the substitution worked
+          grep "^version" Cargo.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Update Cargo.lock
+        run: cargo update --workspace
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create release branch and commit
+        run: |
+          NEXT="${{ steps.version.outputs.next }}"
+          BRANCH="release-v${NEXT}"
+
+          git checkout -b "$BRANCH"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: release v${NEXT}"
+          git push origin "$BRANCH"
+
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEXT="${{ steps.version.outputs.next }}"
+
+          # Write the PR body to a file to avoid quoting issues with special
+          # characters (dollar signs, quotes) that may appear in commit messages
+          cat > /tmp/pr-body.md <<BODY
+## Release v${NEXT}
+
+### Changes since last release
+
+\`\`\`
+$(cat /tmp/changelog.txt)
+\`\`\`
+
+---
+Merging this PR will trigger the \`auto-tag\` workflow which creates the \`v${NEXT}\` tag and kicks off the release build.
+BODY
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "Release v${NEXT}" \
+            --body-file /tmp/pr-body.md
