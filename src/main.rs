@@ -86,15 +86,23 @@ struct NeverEnablesViolation {
     enabled_in: Vec<String>,
 }
 
-struct DuplicateDep {
-    name: String,
-    versions: Vec<String>,
+enum DuplicateFinding {
+    VersionConflict {
+        dep_name: String,
+        occurrences: BTreeMap<String, String>, // crate_name -> version_req
+    },
+    NotUsingWorkspaceDep {
+        dep_name: String,
+        crate_name: String,
+        local_version: String,
+        workspace_version: String,
+    },
 }
 
 struct CheckResult {
     feature_gaps: Vec<FeatureGap>,
     never_enables_violations: Vec<NeverEnablesViolation>,
-    duplicate_deps: Vec<DuplicateDep>,
+    duplicate_deps: Vec<DuplicateFinding>,
 }
 
 impl CheckResult {
@@ -226,17 +234,71 @@ fn handle_init(root: &Path) -> Result<(), String> {
 
 // ── Workspace parsing ────────────────────────────────────────────────────────
 
-struct CrateInfo {
-    features: HashMap<String, Vec<String>>,
+struct DepSpec {
+    version: Option<String>,
+    workspace: bool,
 }
 
-fn parse_workspace(root: &Path) -> HashMap<String, CrateInfo> {
+struct CrateInfo {
+    features: HashMap<String, Vec<String>>,
+    dependencies: HashMap<String, DepSpec>,
+}
+
+fn parse_dep_table(table: &toml::Value) -> HashMap<String, DepSpec> {
+    let mut deps = HashMap::new();
+    let Some(table) = table.as_table() else {
+        return deps;
+    };
+    for (name, value) in table {
+        let spec = match value {
+            toml::Value::String(v) => DepSpec {
+                version: Some(v.clone()),
+                workspace: false,
+            },
+            toml::Value::Table(t) => {
+                let workspace = t
+                    .get("workspace")
+                    .and_then(|w| w.as_bool())
+                    .unwrap_or(false);
+                let version = t.get("version").and_then(|v| v.as_str()).map(String::from);
+                DepSpec { version, workspace }
+            }
+            _ => continue,
+        };
+        deps.insert(name.clone(), spec);
+    }
+    deps
+}
+
+fn parse_workspace(root: &Path) -> (HashMap<String, CrateInfo>, HashMap<String, Option<String>>) {
     let cargo_path = root.join("Cargo.toml");
     let content = std::fs::read_to_string(&cargo_path)
         .unwrap_or_else(|e| panic!("Cannot read {}: {e}", cargo_path.display()));
     let data: toml::Value = content
         .parse()
         .unwrap_or_else(|e| panic!("Cannot parse {}: {e}", cargo_path.display()));
+
+    // Parse [workspace.dependencies]
+    let workspace_deps: HashMap<String, Option<String>> = data
+        .get("workspace")
+        .and_then(|w| w.get("dependencies"))
+        .and_then(|d| d.as_table())
+        .map(|table| {
+            table
+                .iter()
+                .map(|(name, value)| {
+                    let version = match value {
+                        toml::Value::String(v) => Some(v.clone()),
+                        toml::Value::Table(t) => {
+                            t.get("version").and_then(|v| v.as_str()).map(String::from)
+                        }
+                        _ => None,
+                    };
+                    (name.clone(), version)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     let members = data["workspace"]["members"]
         .as_array()
@@ -245,7 +307,6 @@ fn parse_workspace(root: &Path) -> HashMap<String, CrateInfo> {
     let mut crates = HashMap::new();
     for member in members {
         let member_str = member.as_str().unwrap();
-        // Handle glob patterns in workspace members
         let member_dirs = resolve_workspace_member(root, member_str);
         for crate_dir in member_dirs {
             let ct = crate_dir.join("Cargo.toml");
@@ -283,10 +344,24 @@ fn parse_workspace(root: &Path) -> HashMap<String, CrateInfo> {
                 None => HashMap::new(),
             };
 
-            crates.insert(name, CrateInfo { features });
+            // Merge deps from all dependency tables
+            let mut dependencies = HashMap::new();
+            for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                if let Some(table) = d.get(key) {
+                    dependencies.extend(parse_dep_table(table));
+                }
+            }
+
+            crates.insert(
+                name,
+                CrateInfo {
+                    features,
+                    dependencies,
+                },
+            );
         }
     }
-    crates
+    (crates, workspace_deps)
 }
 
 fn resolve_workspace_member(root: &Path, pattern: &str) -> Vec<PathBuf> {
@@ -494,52 +569,63 @@ fn check_never_enables(
     violations
 }
 
-// ── Check 3: Duplicate dependencies ──────────────────────────────────────────
+// ── Check 3: Duplicate dependencies (from Cargo.toml) ────────────────────────
 
-fn check_duplicate_deps() -> Vec<DuplicateDep> {
-    let output = Command::new("cargo")
-        .args(["tree", "-d", "--depth=0"])
-        .output()
-        .expect("Failed to run cargo tree");
+fn check_duplicate_deps_from_toml(
+    crates: &HashMap<String, CrateInfo>,
+    workspace_deps: &HashMap<String, Option<String>>,
+) -> Vec<DuplicateFinding> {
+    let mut findings = Vec::new();
 
-    if !output.status.success() && output.stdout.is_empty() {
-        eprintln!(
-            "  ⚠️ cargo tree -d failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-        return Vec::new();
-    }
-
-    let re = Regex::new(r"^(\S+) v([\d.]+\S*)").unwrap();
-    let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if let Some(caps) = re.captures(line) {
-            let name = caps[1].to_string();
-            let version = caps[2].to_string();
-            deps.entry(name).or_default().insert(version);
+    // Collect all non-workspace deps with explicit versions, grouped by dep name
+    let mut dep_versions: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    for (crate_name, crate_info) in crates {
+        for (dep_name, spec) in &crate_info.dependencies {
+            if spec.workspace {
+                continue;
+            }
+            if let Some(version) = &spec.version {
+                dep_versions
+                    .entry(dep_name.clone())
+                    .or_default()
+                    .insert(crate_name.clone(), version.clone());
+            }
         }
     }
 
-    let duplicates: Vec<DuplicateDep> = deps
-        .into_iter()
-        .filter(|(_, versions)| versions.len() > 1)
-        .map(|(name, versions)| DuplicateDep {
-            name,
-            versions: versions.into_iter().collect(),
-        })
-        .collect();
-
-    if !duplicates.is_empty() {
-        println!("  ⚠️ {} duplicate dep(s)", duplicates.len());
-        for dup in &duplicates {
-            println!("    {}: {}", dup.name, dup.versions.join(", "));
+    // Version conflicts: >1 distinct version string for the same dep
+    for (dep_name, occurrences) in &dep_versions {
+        let distinct: BTreeSet<&String> = occurrences.values().collect();
+        if distinct.len() > 1 {
+            findings.push(DuplicateFinding::VersionConflict {
+                dep_name: dep_name.clone(),
+                occurrences: occurrences.clone(),
+            });
         }
-    } else {
-        println!("  ✅ No duplicate dependencies");
     }
 
-    duplicates
+    // Not using workspace dep: local version when workspace.dependencies has it
+    for (crate_name, crate_info) in crates {
+        for (dep_name, spec) in &crate_info.dependencies {
+            if spec.workspace {
+                continue;
+            }
+            let Some(local_version) = &spec.version else {
+                continue;
+            };
+            if let Some(ws_version) = workspace_deps.get(dep_name) {
+                let ws_ver = ws_version.as_deref().unwrap_or("<unversioned>").to_string();
+                findings.push(DuplicateFinding::NotUsingWorkspaceDep {
+                    dep_name: dep_name.clone(),
+                    crate_name: crate_name.clone(),
+                    local_version: local_version.clone(),
+                    workspace_version: ws_ver,
+                });
+            }
+        }
+    }
+
+    findings
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -563,7 +649,7 @@ fn main() -> ExitCode {
     let config: Config = toml::from_str(&config_content)
         .unwrap_or_else(|e| panic!("Cannot parse {}: {e}", config_path.display()));
 
-    let crates = parse_workspace(&root);
+    let (crates, workspace_deps) = parse_workspace(&root);
 
     let re = Regex::new(r"(\S+) v[\d.]+ \([^)]+\) \[([^\]]*)\]").unwrap();
     let prefix_re = Regex::new(r"^[│├└─\s]+").unwrap();
@@ -579,7 +665,12 @@ fn main() -> ExitCode {
     println!();
 
     println!("📋 [3/3] Duplicate dependencies");
-    let duplicate_deps = check_duplicate_deps();
+    let duplicate_deps = check_duplicate_deps_from_toml(&crates, &workspace_deps);
+    if !duplicate_deps.is_empty() {
+        println!("  ⚠️ {} finding(s)", duplicate_deps.len());
+    } else {
+        println!("  ✅ No duplicate dependency issues");
+    }
     println!();
 
     let result = CheckResult {
@@ -636,11 +727,34 @@ fn main() -> ExitCode {
 
     if !result.duplicate_deps.is_empty() {
         println!(
-            "\n⚠️ {} duplicate dep(s) (informational):\n",
+            "\n⚠️ {} dependency finding(s) (informational):\n",
             result.duplicate_deps.len()
         );
-        for dup in &result.duplicate_deps {
-            println!("  {}: {}", dup.name, dup.versions.join(", "));
+        for finding in &result.duplicate_deps {
+            match finding {
+                DuplicateFinding::VersionConflict {
+                    dep_name,
+                    occurrences,
+                } => {
+                    println!("  🔀 Version conflict: {dep_name}");
+                    for (crate_name, version) in occurrences {
+                        println!("    {crate_name} requires \"{version}\"");
+                    }
+                }
+                DuplicateFinding::NotUsingWorkspaceDep {
+                    dep_name,
+                    crate_name,
+                    local_version,
+                    workspace_version,
+                } => {
+                    println!(
+                        "  📌 {crate_name} → {dep_name}: local \"{local_version}\" but workspace has \"{workspace_version}\""
+                    );
+                    println!(
+                        "    💡 Fix: use {dep_name} = {{ workspace = true }} in {crate_name}/Cargo.toml"
+                    );
+                }
+            }
         }
         println!();
     }
@@ -820,9 +934,12 @@ never-enables = []
         let with_dups = CheckResult {
             feature_gaps: vec![],
             never_enables_violations: vec![],
-            duplicate_deps: vec![DuplicateDep {
-                name: "serde".to_string(),
-                versions: vec!["1.0".to_string(), "2.0".to_string()],
+            duplicate_deps: vec![DuplicateFinding::VersionConflict {
+                dep_name: "serde".to_string(),
+                occurrences: BTreeMap::from([
+                    ("crate_a".to_string(), "1.0".to_string()),
+                    ("crate_b".to_string(), "2.0".to_string()),
+                ]),
             }],
         };
         assert!(!with_dups.has_errors());
@@ -879,5 +996,218 @@ never-enables = []
         assert!(result.unwrap_err().contains("already exists"));
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_parse_dep_table_variants() {
+        let toml_str = r#"
+            serde = "1.0"
+            tokio = { version = "1.30", features = ["full"] }
+            my-lib = { workspace = true }
+            local-dep = { path = "../local" }
+            mixed = { path = "../mixed", version = "0.5" }
+        "#;
+        let value: toml::Value = toml_str.parse().unwrap();
+        let deps = parse_dep_table(&value);
+
+        // String shorthand
+        assert_eq!(deps["serde"].version.as_deref(), Some("1.0"));
+        assert!(!deps["serde"].workspace);
+
+        // Table with version
+        assert_eq!(deps["tokio"].version.as_deref(), Some("1.30"));
+        assert!(!deps["tokio"].workspace);
+
+        // workspace = true
+        assert!(deps["my-lib"].workspace);
+        assert!(deps["my-lib"].version.is_none());
+
+        // Path-only (no version)
+        assert!(deps["local-dep"].version.is_none());
+        assert!(!deps["local-dep"].workspace);
+
+        // Path + version
+        assert_eq!(deps["mixed"].version.as_deref(), Some("0.5"));
+        assert!(!deps["mixed"].workspace);
+    }
+
+    #[test]
+    fn test_duplicate_deps_version_conflict() {
+        let mut crates = HashMap::new();
+        crates.insert(
+            "app".to_string(),
+            CrateInfo {
+                features: HashMap::new(),
+                dependencies: HashMap::from([(
+                    "serde".to_string(),
+                    DepSpec {
+                        version: Some("1.0".to_string()),
+                        workspace: false,
+                    },
+                )]),
+            },
+        );
+        crates.insert(
+            "lib".to_string(),
+            CrateInfo {
+                features: HashMap::new(),
+                dependencies: HashMap::from([(
+                    "serde".to_string(),
+                    DepSpec {
+                        version: Some("2.0".to_string()),
+                        workspace: false,
+                    },
+                )]),
+            },
+        );
+
+        let findings = check_duplicate_deps_from_toml(&crates, &HashMap::new());
+        let conflicts: Vec<_> = findings
+            .iter()
+            .filter(|f| matches!(f, DuplicateFinding::VersionConflict { .. }))
+            .collect();
+        assert_eq!(conflicts.len(), 1);
+        if let DuplicateFinding::VersionConflict {
+            dep_name,
+            occurrences,
+        } = &conflicts[0]
+        {
+            assert_eq!(dep_name, "serde");
+            assert_eq!(occurrences.len(), 2);
+        } else {
+            panic!("expected VersionConflict");
+        }
+    }
+
+    #[test]
+    fn test_duplicate_deps_no_conflict() {
+        let mut crates = HashMap::new();
+        crates.insert(
+            "app".to_string(),
+            CrateInfo {
+                features: HashMap::new(),
+                dependencies: HashMap::from([(
+                    "serde".to_string(),
+                    DepSpec {
+                        version: Some("1.0".to_string()),
+                        workspace: false,
+                    },
+                )]),
+            },
+        );
+        crates.insert(
+            "lib".to_string(),
+            CrateInfo {
+                features: HashMap::new(),
+                dependencies: HashMap::from([(
+                    "serde".to_string(),
+                    DepSpec {
+                        version: Some("1.0".to_string()),
+                        workspace: false,
+                    },
+                )]),
+            },
+        );
+
+        let findings = check_duplicate_deps_from_toml(&crates, &HashMap::new());
+        let conflicts: Vec<_> = findings
+            .iter()
+            .filter(|f| matches!(f, DuplicateFinding::VersionConflict { .. }))
+            .collect();
+        assert!(conflicts.is_empty());
+    }
+
+    #[test]
+    fn test_duplicate_deps_not_using_workspace() {
+        let mut crates = HashMap::new();
+        crates.insert(
+            "app".to_string(),
+            CrateInfo {
+                features: HashMap::new(),
+                dependencies: HashMap::from([(
+                    "serde".to_string(),
+                    DepSpec {
+                        version: Some("1.0".to_string()),
+                        workspace: false,
+                    },
+                )]),
+            },
+        );
+
+        let workspace_deps = HashMap::from([("serde".to_string(), Some("1.0".to_string()))]);
+        let findings = check_duplicate_deps_from_toml(&crates, &workspace_deps);
+        let not_ws: Vec<_> = findings
+            .iter()
+            .filter(|f| matches!(f, DuplicateFinding::NotUsingWorkspaceDep { .. }))
+            .collect();
+        assert_eq!(not_ws.len(), 1);
+        if let DuplicateFinding::NotUsingWorkspaceDep {
+            dep_name,
+            crate_name,
+            local_version,
+            workspace_version,
+        } = &not_ws[0]
+        {
+            assert_eq!(dep_name, "serde");
+            assert_eq!(crate_name, "app");
+            assert_eq!(local_version, "1.0");
+            assert_eq!(workspace_version, "1.0");
+        }
+    }
+
+    #[test]
+    fn test_duplicate_deps_workspace_true_is_clean() {
+        let mut crates = HashMap::new();
+        crates.insert(
+            "app".to_string(),
+            CrateInfo {
+                features: HashMap::new(),
+                dependencies: HashMap::from([(
+                    "serde".to_string(),
+                    DepSpec {
+                        version: None,
+                        workspace: true,
+                    },
+                )]),
+            },
+        );
+
+        let workspace_deps = HashMap::from([("serde".to_string(), Some("1.0".to_string()))]);
+        let findings = check_duplicate_deps_from_toml(&crates, &workspace_deps);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_duplicate_deps_path_only_skipped() {
+        let mut crates = HashMap::new();
+        crates.insert(
+            "app".to_string(),
+            CrateInfo {
+                features: HashMap::new(),
+                dependencies: HashMap::from([(
+                    "local-dep".to_string(),
+                    DepSpec {
+                        version: None,
+                        workspace: false,
+                    },
+                )]),
+            },
+        );
+        crates.insert(
+            "lib".to_string(),
+            CrateInfo {
+                features: HashMap::new(),
+                dependencies: HashMap::from([(
+                    "local-dep".to_string(),
+                    DepSpec {
+                        version: None,
+                        workspace: false,
+                    },
+                )]),
+            },
+        );
+
+        let findings = check_duplicate_deps_from_toml(&crates, &HashMap::new());
+        assert!(findings.is_empty());
     }
 }
