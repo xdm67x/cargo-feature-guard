@@ -127,20 +127,21 @@ jobs:
         run: |
           NEXT="${{ steps.version.outputs.next }}"
 
-          # Write the PR body to a file to avoid quoting issues with special
-          # characters (dollar signs, quotes) that may appear in commit messages
-          cat > /tmp/pr-body.md <<BODY
-## Release v${NEXT}
-
-### Changes since last release
-
-\`\`\`
-$(cat /tmp/changelog.txt)
-\`\`\`
-
----
-Merging this PR will trigger the \`auto-tag\` workflow which creates the \`v${NEXT}\` tag and kicks off the release build.
-BODY
+          # Build the PR body line-by-line to avoid heredoc indentation issues
+          # inside the YAML block scalar (heredocs drop to column 0 which breaks YAML)
+          CHANGELOG=$(cat /tmp/changelog.txt)
+          {
+            echo "## Release v${NEXT}"
+            echo ""
+            echo "### Changes since last release"
+            echo ""
+            echo '```'
+            echo "$CHANGELOG"
+            echo '```'
+            echo ""
+            echo "---"
+            echo "Merging this PR will trigger the \`auto-tag\` workflow which creates the \`v${NEXT}\` tag and kicks off the release build."
+          } > /tmp/pr-body.md
 
           gh pr create \
             --base main \
