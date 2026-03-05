@@ -32,10 +32,42 @@ struct EntryPointConfig {
     features: Vec<String>,
 }
 
+fn string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct StringOrVec;
+
+    impl<'de> de::Visitor<'de> for StringOrVec {
+        type Value = Vec<String>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a string or array of strings")
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Vec<String>, E> {
+            Ok(vec![value.to_owned()])
+        }
+
+        fn visit_seq<S: de::SeqAccess<'de>>(self, mut seq: S) -> Result<Vec<String>, S::Error> {
+            let mut v = Vec::new();
+            while let Some(s) = seq.next_element()? {
+                v.push(s);
+            }
+            Ok(v)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrVec)
+}
+
 #[derive(Deserialize)]
 struct NeverEnablesConfig {
     package: String,
-    forbidden: String,
+    #[serde(deserialize_with = "string_or_vec")]
+    forbidden: Vec<String>,
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -172,7 +204,7 @@ forbidden = "mock"
 
 # [[never-enables]]
 # package = "my-lib"
-# forbidden = "test-only"
+# forbidden = ["test-only", "unstable"]
 "#;
 
 fn handle_init(root: &Path) -> Result<(), String> {
@@ -405,9 +437,10 @@ fn check_never_enables(
     let mut violations = Vec::new();
 
     for rule in &config.never_enables {
+        let forbidden_list = rule.forbidden.join(", ");
         println!(
-            "  {}: '{}' must stay disabled",
-            rule.package, rule.forbidden
+            "  {}: [{}] must stay disabled",
+            rule.package, forbidden_list
         );
 
         let output = Command::new("cargo")
@@ -433,25 +466,28 @@ fn check_never_enables(
 
         let resolved =
             parse_cargo_tree_output(&String::from_utf8_lossy(&output.stdout), re, prefix_re);
-        let enabled_in: Vec<String> = resolved
-            .into_iter()
-            .filter(|(_, feats)| feats.contains(&rule.forbidden))
-            .map(|(name, _)| name)
-            .collect();
 
-        if !enabled_in.is_empty() {
-            println!(
-                "    warning: '{}' enabled in: {}",
-                rule.forbidden,
-                enabled_in.join(", ")
-            );
-            violations.push(NeverEnablesViolation {
-                package: rule.package.clone(),
-                forbidden_feature: rule.forbidden.clone(),
-                enabled_in,
-            });
-        } else {
-            println!("    ok");
+        for forbidden in &rule.forbidden {
+            let enabled_in: Vec<String> = resolved
+                .iter()
+                .filter(|(_, feats)| feats.contains(forbidden))
+                .map(|(name, _)| name.clone())
+                .collect();
+
+            if !enabled_in.is_empty() {
+                println!(
+                    "    warning: '{}' enabled in: {}",
+                    forbidden,
+                    enabled_in.join(", ")
+                );
+                violations.push(NeverEnablesViolation {
+                    package: rule.package.clone(),
+                    forbidden_feature: forbidden.clone(),
+                    enabled_in,
+                });
+            } else {
+                println!("    '{}': ok", forbidden);
+            }
         }
     }
 
@@ -693,7 +729,27 @@ forbidden = "mock"
         assert_eq!(config.entry_points[0].package, "daemon");
         assert_eq!(config.entry_points[0].features, vec!["mock", "nfc"]);
         assert_eq!(config.never_enables.len(), 1);
-        assert_eq!(config.never_enables[0].forbidden, "mock");
+        assert_eq!(config.never_enables[0].forbidden, vec!["mock"]);
+    }
+
+    #[test]
+    fn test_config_deserialization_forbidden_array() {
+        let toml_str = r#"
+[[entry-points]]
+package = "daemon"
+features = ["mock"]
+
+[[never-enables]]
+package = "daemon"
+forbidden = ["mock", "test-only"]
+"#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.never_enables.len(), 1);
+        assert_eq!(
+            config.never_enables[0].forbidden,
+            vec!["mock", "test-only"]
+        );
     }
 
     #[test]

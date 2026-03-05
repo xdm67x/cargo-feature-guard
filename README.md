@@ -52,8 +52,12 @@ features = ["nfc"]
 # Useful to ensure test-only features don't leak into production builds.
 [[never-enables]]
 package = "my-lib"
-manifest-path = "my-lib/Cargo.toml"
 forbidden = "mock"
+
+# Multiple forbidden features can be specified as an array.
+[[never-enables]]
+package = "my-other-lib"
+forbidden = ["mock", "test-only"]
 ```
 
 ### `[[entry-points]]`
@@ -68,8 +72,7 @@ forbidden = "mock"
 | Field | Description |
 |-------|-------------|
 | `package` | The `-p` package name |
-| `manifest-path` | Path to the package's `Cargo.toml` |
-| `forbidden` | Feature that must never be activated in this package's dependency tree |
+| `forbidden` | Feature(s) that must never be activated in this package's dependency tree. Accepts a single string (`"mock"`) or an array (`["mock", "test-only"]`). |
 
 ## Exit codes
 
