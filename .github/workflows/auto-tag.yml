@@ -5,10 +5,8 @@ name: Auto Tag
 # git tag, which triggers the release.yml workflow (build + publish).
 #
 # IMPORTANT: GitHub Actions does not fire workflow triggers for events created
-# with GITHUB_TOKEN. If release.yml does not trigger after the tag is pushed,
-# replace the GITHUB_TOKEN usage below with a PAT (stored as a repository
-# secret, e.g. RELEASE_PAT) that has "Contents: write" scope, and pass it to
-# both the checkout `token:` input and the git push command.
+# with GITHUB_TOKEN. A PAT (RELEASE_PAT) with "Contents: write" scope is used
+# instead so that the tag push triggers the release.yml workflow.
 on:
   push:
     branches:
@@ -29,6 +27,8 @@ jobs:
         with:
           # Full history needed so we can push tags
           fetch-depth: 0
+          # Use PAT so the tag push triggers release.yml
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Extract version from Cargo.toml
         id: version
