@@ -419,20 +419,14 @@ fn cargo_tree_resolved_features(
     prefix_re: &Regex,
 ) -> HashMap<String, HashSet<String>> {
     let features_str = features.join(",");
-    let output = Command::new("cargo")
-        .args([
-            "tree",
-            "-e",
-            "features",
-            "-p",
-            pkg,
-            "--features",
-            &features_str,
-            "-f",
-            "{p} [{f}]",
-        ])
-        .output()
-        .expect("Failed to run cargo tree");
+    let mut cmd = Command::new("cargo");
+    cmd.args(["tree", "-e", "features", "-p", pkg]);
+    if !features.is_empty() {
+        cmd.args(["--features", &features_str]);
+    }
+    cmd.args(["-f", "{p} [{f}]"]);
+
+    let output = cmd.output().expect("Failed to run cargo tree");
 
     if !output.status.success() {
         eprintln!("  ⚠️ cargo tree failed for {pkg} --features {features_str}:");
@@ -457,7 +451,20 @@ fn check_feature_propagation(
         let label = format!("{} --features {}", ep.package, ep.features.join(","));
         println!("  {label}");
 
-        let resolved = cargo_tree_resolved_features(&ep.package, &features_ref, re, prefix_re);
+        // Only pass features that the entry-point package actually defines to
+        // `cargo tree --features`.  Features activated via `default` or
+        // unconditionally in [dependencies] will still appear in the resolved tree.
+        let tree_features: Vec<&str> = if let Some(ci) = crates.get(&ep.package) {
+            features_ref
+                .iter()
+                .filter(|f| ci.features.contains_key(**f))
+                .copied()
+                .collect()
+        } else {
+            features_ref.clone()
+        };
+
+        let resolved = cargo_tree_resolved_features(&ep.package, &tree_features, re, prefix_re);
         if resolved.is_empty() {
             continue;
         }
