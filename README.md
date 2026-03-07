@@ -15,6 +15,10 @@ Uses `cargo tree` as the source of truth, which accounts for feature unification
 ## Installation
 
 ```bash
+# Homebrew (macOS / Linux)
+brew tap xdm67x/tap
+brew install cargo-feature-guard
+
 # From crates.io
 cargo install cargo-feature-guard
 
