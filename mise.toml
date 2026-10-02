@@ -1,0 +1,41 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+
+min_version = "2026.9.7"
+
+[tools]
+rust = { version = "1.98.1", components = "clippy,rustfmt" }
+hk = "2.4.0"
+taplo = "latest"
+
+[tasks.lint]
+description = "Run all lint checks via hk"
+run = "hk check"
+
+[tasks."lint:fix"]
+description = "Run linters and apply fixes via hk"
+run = "hk fix"
+
+[tasks.fmt]
+description = "Format Rust code"
+run = "cargo fmt --all"
+
+[tasks.build]
+description = "Build the binary"
+run = "cargo build"
+
+[tasks.test]
+description = "Run all tests"
+run = "cargo test"
+
+[tasks.check]
+description = "Run the full local CI suite (fmt, clippy, tests)"
+run = [
+  "cargo fmt --all -- --check",
+  "cargo clippy --all-targets -- -D warnings",
+  "cargo test",
+]
+
+[tasks.ci]
+description = "Run everything CI runs, via hk"
+depends = ["check"]
+run = "hk check --all"

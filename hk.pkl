@@ -1,0 +1,42 @@
+amends "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Config.pkl"
+
+// Run every step through `mise x` so hk uses the mise-pinned tools
+// (rustfmt, clippy, taplo) instead of whatever happens to be on PATH,
+// keeping pre-commit hooks and CI in sync.
+local linters = new Mapping<String, Step> {
+  ["cargo-fmt"] {
+    glob = List("**/*.rs")
+    check = "mise x -- cargo fmt --all -- --check"
+    fix = "mise x -- cargo fmt --all"
+  }
+
+  ["clippy"] {
+    glob = List("**/*.rs", "Cargo.toml", "Cargo.lock")
+    check = "mise x -- cargo clippy --all-targets -- -D warnings"
+  }
+
+  ["taplo"] {
+    glob = List("**/*.toml")
+    exclude = List("Cargo.lock")
+    check = "mise x -- taplo fmt --check {{files}} && mise x -- taplo check {{files}}"
+    fix = "mise x -- taplo fmt {{files}} && mise x -- taplo check {{files}}"
+  }
+}
+
+hooks {
+  ["pre-commit"] {
+    fix = true
+    stage = true
+    stash = "git"
+    steps = linters
+  }
+
+  ["fix"] {
+    fix = true
+    steps = linters
+  }
+
+  ["check"] {
+    steps = linters
+  }
+}

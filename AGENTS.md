@@ -11,11 +11,17 @@ skill, run `.agents/scripts/link-skills.sh` to update the symlinks in `.claude/`
 ## Quick Reference
 
 ```bash
-cargo build                  # Build the binary
-cargo test                   # Run all tests
-cargo fmt --check            # Check formatting
-cargo clippy --all-targets -- -D warnings  # Lint
+mise install                 # Install pinned tools (rust, hk, taplo)
+mise run build              # Build the binary
+mise run test                # Run all tests
+mise run lint                # Lint via hk (cargo fmt --check, clippy, taplo)
+mise run check               # Full local CI suite (fmt, clippy, tests)
+mise run ci                  # Everything CI runs
 ```
+
+Git hooks are managed by [hk](https://hk.jdx.dev/) (`hk.pkl`). After cloning, run
+`mise x -- hk install` to install the pre-commit hook, which formats and lints
+staged files before each commit.
 
 ## Architecture
 
@@ -23,7 +29,7 @@ Single-binary Rust CLI (`src/main.rs`) — the entire codebase lives in one file
 
 ### Key Components
 
-- **Config** — Deserialized from `feature-guard.toml`. Defines `[[entry-points]]` and `[[never-enables]]` rules.
+- **Config** — Deserialized from `feature-guard.toml` (see `feature-guard.toml` docs). Defines `[[entry-points]]` and `[[never-enables]]` rules.
 - **Workspace parser** — Reads workspace `Cargo.toml`, resolves glob members, collects each crate's feature definitions.
 - **Cargo tree parser** — Runs `cargo tree -e features` and parses the output with regex to extract resolved features per crate.
 - **Three checks** run in sequence:
@@ -51,7 +57,7 @@ Single-binary Rust CLI (`src/main.rs`) — the entire codebase lives in one file
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`): fmt check, clippy, tests on `ubuntu-latest` with stable Rust.
+GitHub Actions (`.github/workflows/ci.yml`): tools installed via mise (`mise.toml`), then `mise run lint` (hk) and `mise run check` (fmt, clippy, tests) on `ubuntu-latest`.
 
 ## Dependencies
 
