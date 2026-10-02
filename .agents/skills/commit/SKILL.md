@@ -1,7 +1,6 @@
 ---
 name: commit
 description: Commit staged changes using conventional commits. Only feat and fix types are allowed. Use when the user says "commit", "/commit", or wants to create a git commit.
-allowed-tools: Bash
 ---
 
 # Conventional Commit (feat/fix only)
@@ -37,7 +36,6 @@ Create a git commit following the Conventional Commits format, restricted to `fe
    git commit -m "$(cat <<'EOF'
    feat: the message here
 
-   Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
    EOF
    )"
    ```
