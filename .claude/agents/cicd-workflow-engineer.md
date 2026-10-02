@@ -81,7 +81,7 @@ Always explicitly label which phase you are in.
 Before making changes, always check:
 - Existing workflows in `.github/workflows/`
 - The project's language, build system, and test framework
-- Any project-specific CI conventions from CLAUDE.md or similar docs
+- Any project-specific CI conventions from AGENTS.md or similar docs
 - Branch protection rules or required status checks that may be affected
 
 ## Output Format
