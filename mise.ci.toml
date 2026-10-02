@@ -1,0 +1,36 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+
+# CI-only configuration, selected with `MISE_ENV=ci` (or `mise -E ci ...`).
+# The base mise.toml still loads; this file only adds release tooling and tasks.
+
+[tools]
+# Extra rustup targets for the Linux musl builds
+rust = { version = "1.98.1", components = "clippy,rustfmt", targets = "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl" }
+# Cross-compilation for the Linux aarch64 musl build
+cargo-zigbuild = "latest"
+zig = "latest"
+
+[env]
+CARGO_TERM_COLOR = "always"
+
+[tasks."release:build"]
+description = "Build the release binary for a target (native or zigbuild)"
+usage = '''
+flag "--target <target>" help="Rust target triple (e.g. x86_64-unknown-linux-musl)" required=true
+'''
+run = "cargo zigbuild --release --target {{ usage.target }}"
+
+[tasks."release:build-native"]
+description = "Build the release binary natively for a target"
+usage = '''
+flag "--target <target>" help="Rust target triple (e.g. x86_64-pc-windows-msvc)" required=true
+'''
+run = "cargo build --release --target {{ usage.target }}"
+
+[tasks."release:publish"]
+description = "Publish the crate to crates.io"
+run = "cargo publish"
+
+[tasks."release:lock"]
+description = "Update Cargo.lock after a version bump"
+run = "cargo update --workspace"
