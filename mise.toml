@@ -3,7 +3,7 @@
 min_version = "2026.9.7"
 
 [tools]
-rust = "1.98.1"
+rust = { version = "1.98.1", components = "clippy,rustfmt" }
 hk = "2.4.0"
 taplo = "latest"
 
