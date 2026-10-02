@@ -1,7 +1,6 @@
 ---
 name: pr
 description: Create or update a pull request with a structured description. Use when the user says "pr", "/pr", "create pr", "update pr", or wants to open/edit a pull request.
-allowed-tools: Bash
 ---
 
 # Pull Request Creation/Update
