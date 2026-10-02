@@ -2,6 +2,12 @@
 
 A Cargo plugin that validates feature propagation across workspaces, detects forbidden features, and finds duplicate dependencies. Uses `cargo tree` as the source of truth.
 
+## Agent Configuration
+
+Sub-agents and skills live in `.agents/` (agent-agnostic, single source of truth).
+See [`.agents/AGENTS.md`](.agents/AGENTS.md). After adding or removing an agent or
+skill, run `.agents/scripts/link-skills.sh` to update the symlinks in `.claude/`.
+
 ## Quick Reference
 
 ```bash
