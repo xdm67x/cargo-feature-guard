@@ -4,19 +4,23 @@ Thanks for contributing to `cargo-feature-guard`! This document explains how to 
 
 ## Development Setup
 
+This project uses [mise](https://mise.jdx.dev/) to pin and install its dev tools
+(Rust, [hk](https://hk.jdx.dev/), taplo). After cloning:
+
 ```bash
 git clone https://github.com/xdm67x/cargo-feature-guard
 cd cargo-feature-guard
-cargo build
-cargo test
+mise install          # install the pinned tools
+mise x -- hk install # install the pre-commit hook
+mise run build       # build
+mise run test        # test
 ```
 
 Before opening a PR, make sure the following checks pass:
 
 ```bash
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+mise run lint   # hk: cargo fmt --check, clippy, taplo
+mise run check  # cargo fmt --check, clippy -D warnings, cargo test
 ```
 
 ## Commit Messages
@@ -56,7 +60,7 @@ ci: cache cargo registry in test workflow
 
 2. **Make your changes** and commit them following the commit message conventions above.
 
-3. **Verify locally** — run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` before pushing.
+3. **Verify locally** — run `mise run lint` and `mise run check` before pushing.
 
 4. **Push and open the PR**:
 
